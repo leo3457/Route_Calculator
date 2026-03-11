@@ -6,8 +6,10 @@
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
+<meta name="author" content="Leo Liao">
+<meta name="dcterms.date" content="2026-03-11">
 
-<title>Route Calculator</title>
+<title>EV Telemetry Route Calculation &amp; Visualization Pipeline – Route Calculator</title>
 <style>
 /* Default styles provided by pandoc.
 ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
@@ -111,22 +113,45 @@ ul.task-list li input[type="checkbox"] {
 <div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article page-navbar">
 <!-- sidebar -->
 <!-- margin-sidebar -->
-    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar zindex-bottom">
-        
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">On this page</h2>
+   
+  <ul>
+  <li><a href="#introduction" id="toc-introduction" class="nav-link active" data-scroll-target="#introduction">1. Introduction</a></li>
+  <li><a href="#data-acquisition-import" id="toc-data-acquisition-import" class="nav-link" data-scroll-target="#data-acquisition-import">2. Data Acquisition (Import)</a></li>
+  <li><a href="#data-transformation-the-processing-engine" id="toc-data-transformation-the-processing-engine" class="nav-link" data-scroll-target="#data-transformation-the-processing-engine">3. Data Transformation &amp; The Processing Engine</a>
+  <ul class="collapse">
+  <li><a href="#the-performance-bottleneck-route_calculator.py" id="toc-the-performance-bottleneck-route_calculator.py" class="nav-link" data-scroll-target="#the-performance-bottleneck-route_calculator.py">The Performance Bottleneck (<code>route_calculator.py</code>)</a></li>
+  </ul></li>
+  </ul>
+</nav>
     </div>
 <!-- main -->
 <main class="content" id="quarto-document-content">
 
 <header id="title-block-header" class="quarto-title-block default">
 <div class="quarto-title">
-<h1 class="title">Route Calculator</h1>
+<h1 class="title">EV Telemetry Route Calculation &amp; Visualization Pipeline</h1>
 </div>
 
 
 
 <div class="quarto-title-meta">
 
+    <div>
+    <div class="quarto-title-meta-heading">Author</div>
+    <div class="quarto-title-meta-contents">
+             <p>Leo Liao </p>
+          </div>
+  </div>
     
+    <div>
+    <div class="quarto-title-meta-heading">Published</div>
+    <div class="quarto-title-meta-contents">
+      <p class="date">March 11, 2026</p>
+    </div>
+  </div>
   
     
   </div>
@@ -136,10 +161,39 @@ ul.task-list li input[type="checkbox"] {
 </header>
 
 
-<p>This is a Quarto website.</p>
-<p>To learn more about Quarto websites visit <a href="https://quarto.org/docs/websites" class="uri">https://quarto.org/docs/websites</a>.</p>
+<section id="introduction" class="level2">
+<h2 class="anchored" data-anchor-id="introduction">1. Introduction</h2>
+<p>This case study outlines the end-to-end data science and engineering workflow for processing high-frequency Electric Vehicle (EV) CAN bus telemetry. The primary goal of this pipeline is to ingest raw “golden signals” (GPS, odometer, and battery state-of-charge), generate deterministic driving routes, and visualize them for downstream predictive maintenance using deep learning models.</p>
+</section>
+<section id="data-acquisition-import" class="level2">
+<h2 class="anchored" data-anchor-id="data-acquisition-import">2. Data Acquisition (Import)</h2>
+<p>Raw telemetry data is continuously emitted by the vehicle’s IoT gateway. To extract this data, I utilized specific SQL extraction scripts (<code>route_queries.py</code>) to pull time-series data from our backend databases. The raw datasets contain critical metrics: * <code>time</code>: UTC Timestamps. * <code>odometer</code>: Cumulative distance tracking. * <code>soc</code>: Battery State of Charge (%). * <code>ignition</code>: Binary status of the vehicle engine.</p>
+<p>To ensure reproducible testing during development, I took snapshots of this data, resulting in files like <code>sample_golden_signal_opent1.csv</code>.</p>
+</section>
+<section id="data-transformation-the-processing-engine" class="level2">
+<h2 class="anchored" data-anchor-id="data-transformation-the-processing-engine">3. Data Transformation &amp; The Processing Engine</h2>
+<p>The core of this project is the <strong>Route Calculator Engine</strong>. The engine parses the continuous stream of CAN bus data and splits it into discrete “trips” or “routes” based on specific logic (e.g., when the vehicle charges vs.&nbsp;when it is driving).</p>
+<section id="the-performance-bottleneck-route_calculator.py" class="level3">
+<h3 class="anchored" data-anchor-id="the-performance-bottleneck-route_calculator.py">The Performance Bottleneck (<code>route_calculator.py</code>)</h3>
+<p>Initially, the engine processed the dataframe using Pandas’ <code>df.iterrows()</code>. ```python # Old Implementation (Slow) for _, row in df.iterrows(): odo_mi = row[‘odometer’] * 0.000621371 time_gap = (row[‘time’] - prev_time).total_seconds()</p>
+<p>This approach created severe CPU bottlenecks. Iterating row-by-row in Python meant the interpreter had to perform type checks, allocate memory, and dispatch operations over 500,000+ times per run. Processing a standard batch of 100 trucks took ~48 to 50 seconds.</p>
+<p>The Refactor (route_calculator2.py) To achieve production-ready latency, I completely refactored the calculation loop to leverage Pandas vectorization and itertuples(). By treating columns as contiguous memory blocks rather than iterating through individual Python Series objects, the processing time dropped to ~0.7 seconds.</p>
+<p>Result: A 64x speed improvement, enabling the API to return responses almost instantly.</p>
+<p>Validation and Testing Data integrity is critical when refactoring data science pipelines. I created comprehensive unit tests (test_route_cal.py and test_route_cal2.py) comparing the output of the old engine against the new engine using our sample CSV datasets to ensure 100% parity in the resulting deterministic driving routes.</p>
+<ol start="4" type="1">
+<li>Visualization &amp; Communication With the data efficiently transformed, it is exposed to our Grafana Service Dashboard to provide immediate insights to stakeholders.</li>
+</ol>
+<p>Interactive Mapping: The driving_route table features dynamic Data Links. By clicking on a specific start or end time, the Grafana URL parameters (from and to) are automatically updated.</p>
+<p>Timezone Alignment: A critical hurdle was aligning the UTC timestamps generated by the backend with the local browser time (PST). By standardizing the dashboard’s global time settings to UTC and pushing raw millisecond epochs into the URL variables, the GPS map accurately queries and displays only the telemetry for that exact 50-mile or 86-mile drive.</p>
+<p>Efficiency Metrics: The table automatically calculates kWh/mile allowing technicians to spot battery degradation at a glance.</p>
+<ol start="5" type="1">
+<li>Modeling (Next Steps) The successful transformation and speed optimization of the Route Calculator lays the groundwork for advanced predictive analytics. Because the route boundaries are now cleanly separated and calculated in sub-seconds, we can efficiently feed these route sequences into an Informer Model.</li>
+</ol>
+<p>Unlike standard Transformers that suffer from quadratic complexity, the Informer’s ProbSparse self-attention mechanism is perfectly suited to handle the long-sequence time-series data of our EV telemetry, allowing us to predict battery faults before they occur.</p>
 
 
+</section>
+</section>
 
 </main> <!-- /main -->
 <script id="quarto-html-after-body" type="application/javascript">

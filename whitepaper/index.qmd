@@ -1,59 +1,109 @@
 ---
-title: "EV Telemetry Route Calculation & Visualization Pipeline"
+title: "An End-to-End Workflow for Deterministic EV Driving Route Calculation"
+subtitle: "Optimizing continuous telemetry pipelines for predictive State-of-Health modeling"
 author: "Leo Liao"
 date: "2026-03-11"
 format:
   html:
-    theme: cosmo
+    theme: journal
     toc: true
     toc-depth: 3
+    code-fold: show
 ---
 
 ## 1. Introduction
-This case study outlines the end-to-end data science and engineering workflow for processing high-frequency Electric Vehicle (EV) CAN bus telemetry. The primary goal of this pipeline is to ingest raw "golden signals" (GPS, odometer, and battery state-of-charge), generate deterministic driving routes, and visualize them for downstream predictive maintenance using deep learning models.
 
-## 2. Data Acquisition (Import)
-Raw telemetry data is continuously emitted by the vehicle's IoT gateway. 
-To extract this data, I utilized specific SQL extraction scripts (`route_queries.py`) to pull time-series data from our backend databases. The raw datasets contain critical metrics:
+The proliferation of Electric Vehicle (EV) fleets has necessitated the development of precise, scalable systems for monitoring and predicting battery State-of-Health (SoH). A critical component of this endeavor is the accurate segmentation of continuous vehicle telemetry into discrete, statistically significant driving events or "routes." 
+
+A raw stream of sensor data, while informative, lacks the deterministic structure required for robust machine learning applications, such as the Informer-based fault detection algorithms currently being developed. This case study presents a reproducible workflow for ingesting high-frequency "golden signals," executing deterministic route segmentation, and visualizing the results within an interactive dashboard.
+
+## 2. Preliminary Assumptions & The Data Workflow
+
+Before addressing the specific implementation, we must define the methodological framework. We adopt the standard data science workflow popularized by Hadley Wickham:
+
+1.  **Import:** Acquisition of pre-aggregated, canonical telemetry streams ("golden signals").
+2.  **Tidy:** Structural normalization and alignment (e.g., temporal synchronization).
+3.  **Transform:** The execution of deterministic algorithms to segment data and calculate route-level metrics.
+4.  **Visualize:** The interface for human review and anomaly detection (Grafana).
+5.  **Model:** High-fidelity forecasting (Informer Model).
+6.  **Communicate:** The dissemination of actionable insights via automated reporting (Quarto/GitHub Pages).
+
+This document specifically explores the optimization from **Import $\to$ Transform** to achieve production-ready latency.
+
+## 3. Data Acquisition (Import)
+
+### The 'Golden Signals' Data Model
+
+A critical clarification is necessary regarding the data source. Our calculation engine does not directly process asynchronous, raw Controller Area Network (CAN) bus signals. To minimize computational latency and handle massive data volumes, the pipeline utilizes a **"Golden Signals" database table**. 
+
+This table represents a synchronized, canonical abstraction of the raw CAN data, aggregated at deterministic time intervals. The fundamental variables required for route segmentation are:
 * `time`: UTC Timestamps.
-* `odometer`: Cumulative distance tracking.
+* `latitude`/`longitude`: GPS coordinates (spatial analysis).
+* `odometer`: A monotonic cumulative distance variable (scalar logic).
 * `soc`: Battery State of Charge (%).
-* `ignition`: Binary status of the vehicle engine.
 
-To ensure reproducible testing during development, I took snapshots of this data, resulting in files like `sample_golden_signal_opent1.csv`.
+### Programmatic Extraction
 
-## 3. Data Transformation & The Processing Engine
-The core of this project is the **Route Calculator Engine**. The engine parses the continuous stream of CAN bus data and splits it into discrete "trips" or "routes" based on specific logic (e.g., when the vehicle charges vs. when it is driving). 
+Data is retrieved from this table using formalized SQL queries, as encapsulated in the `route_queries.py` utility module. For reproducible unit testing and model development, automated snapshots are executed to generate standard CSV datasets, such as the `sample_golden_signal_opent1.csv` file utilized in this study.
 
-### The Performance Bottleneck (`route_calculator.py`)
-Initially, the engine processed the dataframe using Pandas' `df.iterrows()`. 
-```python
-# Old Implementation (Slow)
-for _, row in df.iterrows():
-    odo_mi = row['odometer'] * 0.000621371
-    time_gap = (row['time'] - prev_time).total_seconds()
+## 4. Deterministic Route Segmentation (The Transform Phase)
 
-This approach created severe CPU bottlenecks. Iterating row-by-row in Python meant the interpreter had to perform type checks, allocate memory, and dispatch operations over 500,000+ times per run. Processing a standard batch of 100 trucks took ~48 to 50 seconds.
+The primary mathematical hurdle is segmentation: identifying when a vehicle begins a discrete driving event and when that event concludes, specifically distinguishing it from charging or significant idling events.
 
-The Refactor (route_calculator2.py)
-To achieve production-ready latency, I completely refactored the calculation loop to leverage Pandas vectorization and itertuples().
-By treating columns as contiguous memory blocks rather than iterating through individual Python Series objects, the processing time dropped to ~0.7 seconds.
+### The Algorithm Logic
 
-Result: A 64x speed improvement, enabling the API to return responses almost instantly.
+The deterministic logic behind the segmentation engine is formalized in the `calculate_driving_route` function. The core algorithm relies on a robust detection of state changes.
 
-Validation and Testing
-Data integrity is critical when refactoring data science pipelines. I created comprehensive unit tests (test_route_cal.py and test_route_cal2.py) comparing the output of the old engine against the new engine using our sample CSV datasets to ensure 100% parity in the resulting deterministic driving routes.
+Our previous iteration, implemented in `route_calculator.py`, utilized the `ignition` status in conjunction with motion detection. In our refined iteration, `route_calculator2.py`, the motion detection logic was simplified for robustness:
 
-4. Visualization & Communication
-With the data efficiently transformed, it is exposed to our Grafana Service Dashboard to provide immediate insights to stakeholders.
+1.  A "driving segment" is defined by consecutive rows where the vehicle has a speed greater than zero.
+2.  The script detects a "trip start" when the ignition status changes from 0 to 1.
+3.  A "trip end" is defined when the ignition status reverts to 0 (ignition off), or a significant temporal gap in data is observed.
+4.  If a potential trip end is detected (ignition off), the script validates the entire driving segment against several heuristic parameters:
+    * **Minimum Duration:** Must the drive last longer than, e.g., 60 seconds?
+    * **Minimum Distance:** Did the vehicle travel farther than, e.g., 0.1 miles?
+5.  If validated, a resulting row is appended to the `driving_route` table.
 
-Interactive Mapping: The driving_route table features dynamic Data Links. By clicking on a specific start or end time, the Grafana URL parameters (from and to) are automatically updated.
+This logic ensures that only meaningful driving events are recorded, filtering out "accidental" ignition cycles or GPS drift while the vehicle is parked.
 
-Timezone Alignment: A critical hurdle was aligning the UTC timestamps generated by the backend with the local browser time (PST). By standardizing the dashboard's global time settings to UTC and pushing raw millisecond epochs into the URL variables, the GPS map accurately queries and displays only the telemetry for that exact 50-mile or 86-mile drive.
+## 5. Engineering Optimization: Iteration vs. Vectorization
 
-Efficiency Metrics: The table automatically calculates kWh/mile allowing technicians to spot battery degradation at a glance.
+A significant computational bottleneck was identified during the implementation of the above algorithm. While statistically sound, the initial Python implementation of the loop created severe latency issues.
 
-5. Modeling (Next Steps)
-The successful transformation and speed optimization of the Route Calculator lays the groundwork for advanced predictive analytics. Because the route boundaries are now cleanly separated and calculated in sub-seconds, we can efficiently feed these route sequences into an Informer Model.
+### The Bottleneck: Scalar Iteration with `iterrows()`
 
-Unlike standard Transformers that suffer from quadratic complexity, the Informer's ProbSparse self-attention mechanism is perfectly suited to handle the long-sequence time-series data of our EV telemetry, allowing us to predict battery faults before they occur.
+The original implementation processed telemetry data row-by-row using Pandas' `df.iterrows()`. This approach forced Python to perform expensive metadata checks and memory allocations for every row of data (often hundreds of thousands) within a given batch.
+
+**Result:** A batch of 100 trucks took **~48 to 50 seconds**.
+
+### The Solution: Optimized Iteration with `itertuples()` & Vectorization
+
+To achieve deterministic sub-second processing, the loop was completely refactored in `route_calculator2.py`. We eliminated standard Pandas series iteration entirely, replacing it with `df.itertuples(index=False)`, which provides a significant speed advantage.
+
+Furthermore, all auxiliary mathematical operations (such as converting odometer counts into miles or State of Charge deltas) were moved outside the loop and executed as **vectorized operations** across the entire column. 
+
+**Result:** Processing time for the identical 100-truck batch dropped to **~0.7 seconds**, achieving a **~64x speed improvement**.
+
+## 6. Visualization & Interface Design (Communicate)
+
+To expose these calculated routes to human stakeholders (fleet managers and engineers), the data is visualized via an interactive **Grafana Service Dashboard**. As highlighted by Alex Gold (2022) in "DevOps for Data Science," utilizing a dynamic medium like an interactive dashboard ensures insights are both sustainable and digestible.
+
+![The formalized Grafana Service Dashboard, providing an integrated spatial and temporal view of calculated driving routes. The left panel shows GPS pings overlays on the map, while the right time-series panels show odometer and battery voltage stability throughout the specific trip duration.](images/grafana_dashboard.jpg){#fig-dashboard}
+
+### Integrated Time-Series Analysis
+
+Figure 1 illustrates the final interface. The segmentation engine populates the `Driving Route` table (bottom left) with discrete trip metrics. Crucially, the dashboard is linked to the backend "Golden Signals" table via the timestamp variables (`from` and `to`).
+
+Once a specific trip is identified in the table, the human operator can utilize Grafana's internal linking feature to "zoom" the entire dashboard to only show the GPS dots and corresponding time-series data (LV, Odometer) for that precise duration. This eliminates temporal "white noise," allowing for immediate identification of sensor errors or battery anomalies that occurred *during* a specific route.
+
+### Verification via the Raw Database View
+
+To verify the integrity of this visualization against our Optimized Engine's output, we can examine a raw SQL view of the segmented `driving_route` table within the Postgres database.
+
+![A snapshot of the actual Postgres database view of the output from our Route segmentation engine. This demonstrates the successfully calculated route variables: deterministic start/end times, trip duration, odometer-based mileage, and battery energy usage metrics (`soc_start`/`soc_end`).](images/db_driving_route.png){#fig-db_view}
+
+Figure 2 confirms the successful generation of our deterministic driving routes. Each row now represents a validated driving event, complete with a clean start/end time, duration, validated distance, and energy delta. It is this structured output that serves as the final, clean input required for the Informer-based predictive models.
+
+## 7. Conclusions
+
+The successful implementation of this deterministic route segmentation engine has stabilized the EV telemetry pipeline, addressing the primary data engineering challenges of scale and latency. By transforming raw continuous telemetry into clean, deterministic driving events, we have optimized not only the statistical precision of our State-of-Health modeling but also the sustainable communication of those insights to stakeholders. This optimized workflow ensures that advanced AI forecasting can proceed on a foundation of clean, reliable data.

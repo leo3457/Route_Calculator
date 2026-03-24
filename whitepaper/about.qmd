@@ -1,5 +1,43 @@
 ---
-title: "About"
+title: "Architecture & Methodology"
+author: "Data Engineering Team"
+date: last-modified
+format: 
+  html:
+    toc: true
+    theme: zephyr
+  pdf:
+    toc: true
+    colorlinks: true
 ---
 
-About this site
+## The Challenge: Telemetry at Scale
+
+Modern commercial fleets generate a massive, continuous stream of CAN bus telemetry. For the Harbinger Route Calculator, the primary engineering challenge was not just ingesting this data, but organizing it into deterministic, human-readable "routes" without choking the compute layer or duplicating records in the database.
+
+The previous architecture suffered from scalar iteration and the N+1 database query problem. As the fleet grew, the time to calculate routes scaled linearly and unsustainably. This project was initiated to completely rebuild the calculation engine for speed, accuracy, and horizontal scalability.
+
+## Core Technology Stack
+
+The Route Calculator is built on a lightweight, high-performance data engineering stack:
+
+* **Python & Flask-RESTful:** Serves as the API layer, exposing the calculation engine to external triggers via robust POST endpoints.
+* **Pandas (C-Optimized):** Handles all in-memory telemetry manipulation. By utilizing vectorized Pandas operations (`.diff()`, `.fillna()`), the engine bypasses Python's interpreter overhead and executes mathematical transformations at the C/C++ hardware level.
+* **PostgreSQL & SQLAlchemy:** Acts as the persistent storage layer. Complex analytical queries are executed directly on the DB engine, and upserts leverage deterministic `ON CONFLICT` constraints to guarantee data integrity.
+
+## Architecture: The Batch Processing Pipeline
+
+The system is designed to run in highly efficient batches (e.g., a 48-hour trailing window). The data flow follows a strict, four-phase pipeline:
+
+1. **Bulk Database Reads:** Instead of querying the database per truck (the N+1 problem), the engine fetches all active telemetry and all historical overlapping routes for the entire fleet in two massive, highly optimized queries.
+2. **In-Memory Sectioning:** The bulk data is locally partitioned using Pandas `groupby()`, creating isolated DataFrames for each specific vehicle in a fraction of a second.
+3. **The Vectorized Engine:** Each vehicle's telemetry passes through the C-level math operators, followed by a lightweight `itertuples()` loop to apply the business logic (Charge, Idle, Open states) and reconcile against historical overlaps.
+4. **Bulk Database Write:** The fully validated and reconciled route records are grouped together and written back to PostgreSQL in a single bulk UPSERT operation.
+
+## Future Scalability: Embarrassingly Parallel
+
+Because all database reads and writes have been decoupled from the calculation loop, the `process_golden_df` engine is now completely stateless. 
+
+This means the architecture is currently **embarrassingly parallel**. If the fleet size scales to the point where a single vectorized loop becomes a bottleneck (e.g., 5,000+ trucks), the system is already structurally prepared to distribute the workload. 
+
+Future iterations will seamlessly implement `concurrent.futures.ProcessPoolExecutor` to chunk the `grouped_telemetry` dictionary and assign specific fleets to independent CPU cores, yielding near-linear performance gains.

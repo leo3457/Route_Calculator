@@ -1,22 +1,23 @@
-project:
-  type: website
-  output-dir: ../docs
-
 website:
-  title: "Route Calculator"
+  title: "Harbinger Route Calculator"
+  description: "High-Performance Telemetry Engine Documentation"
+  search: true
   navbar:
+    background: primary
     left:
       - href: index.qmd
-        text: Home
-      - about.qmd
+        text: "Engine & Logic"
+      - href: about.qmd
+        text: "Architecture & Stack"
+    right:
+      - icon: github
+        href: https://github.com/leo3457/Route_Calculator
 
 format:
   html:
-    theme:
-      - cosmo
-      - brand
+    theme: zephyr
     css: styles.css
     toc: true
-
-
-
+    toc-depth: 3
+    code-fold: show
+    code-copy: true

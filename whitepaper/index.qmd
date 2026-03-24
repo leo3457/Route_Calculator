@@ -1,109 +1,160 @@
 ---
-title: "An End-to-End Workflow for Deterministic EV Driving Route Calculation"
-subtitle: "Optimizing continuous telemetry pipelines for predictive State-of-Health modeling"
-author: "Leo Liao"
-date: "2026-03-11"
-format:
+title: "Harbinger Route Calculator: Engineering a High-Performance Telemetry Engine"
+author: "Data Engineering Team"
+date: last-modified
+format: 
   html:
-    theme: journal
     toc: true
     toc-depth: 3
+    theme: zephyr
     code-fold: show
+    code-tools: true
+  pdf:
+    toc: true
+    number-sections: true
+    colorlinks: true
 ---
 
-## 1. Introduction
+## Executive Summary
 
-The proliferation of Electric Vehicle (EV) fleets has necessitated the development of precise, scalable systems for monitoring and predicting battery State-of-Health (SoH). A critical component of this endeavor is the accurate segmentation of continuous vehicle telemetry into discrete, statistically significant driving events or "routes." 
+The Harbinger Route Calculator processes millions of rows of synchronized CAN bus telemetry to generate deterministic, consolidated driving routes for the fleet. 
 
-A raw stream of sensor data, while informative, lacks the deterministic structure required for robust machine learning applications, such as the Informer-based fault detection algorithms currently being developed. This case study presents a reproducible workflow for ingesting high-frequency "golden signals," executing deterministic route segmentation, and visualizing the results within an interactive dashboard.
+In its latest iteration, the calculation engine underwent a massive architectural refactor to eliminate Python-level memory allocation overhead and database query bottlenecks. By leveraging **C-level Pandas vectorization**, lightweight iteration, and bulk PostgreSQL upserts, processing time for a standard 180-truck batch dropped from **~48 seconds to ~0.7 seconds**—a **64× performance improvement**.
 
-## 2. Preliminary Assumptions & The Data Workflow
+---
 
-Before addressing the specific implementation, we must define the methodological framework. We adopt the standard data science workflow popularized by Hadley Wickham:
+## 1. Performance Optimization: Overcoming the Python Bottleneck
 
-1.  **Import:** Acquisition of pre-aggregated, canonical telemetry streams ("golden signals").
-2.  **Tidy:** Structural normalization and alignment (e.g., temporal synchronization).
-3.  **Transform:** The execution of deterministic algorithms to segment data and calculate route-level metrics.
-4.  **Visualize:** The interface for human review and anomaly detection (Grafana).
-5.  **Model:** High-fidelity forecasting (Informer Model).
-6.  **Communicate:** The dissemination of actionable insights via automated reporting (Quarto/GitHub Pages).
+### The Original Bottleneck: `iterrows()` and Scalar Math
+The initial engine processed telemetry sequentially using Pandas `iterrows()`. Because Python is dynamically typed, iterating row-by-row forces the interpreter to perform type checks, allocate memory for a full Pandas Series object, and dispatch mathematical operations sequentially for every single row. Across 500,000+ rows of telemetry, this CPU thrashing caused severe latency.
 
-This document specifically explores the optimization from **Import $\to$ Transform** to achieve production-ready latency.
+### The Solution: Vectorization and `itertuples()`
+To achieve sub-second processing, the engine was rewritten to utilize **vectorization**. 
 
-## 3. Data Acquisition (Import)
+Instead of computing time gaps and distance deltas inside a Python loop, these operations are now applied to entire columns simultaneously. This pushes the heavy mathematical lifting down to highly optimized C/C++ execution paths at the hardware level.
 
-### The 'Golden Signals' Data Model
+Once the math is calculated in bulk, the engine iterates over the data using `itertuples()`, which yields lightweight, read-only NamedTuples with near-zero overhead.
 
-A critical clarification is necessary regarding the data source. Our calculation engine does not directly process asynchronous, raw Controller Area Network (CAN) bus signals. To minimize computational latency and handle massive data volumes, the pipeline utilizes a **"Golden Signals" database table**. 
+#### Vectorized Math Implementation
+```python
+# --- Vectorization (The Math) ---
+# Executed in bulk via C-level paths before iteration begins
+df['odo_mi'] = df['odometer'] * METERS_TO_MILES
+df['time_gap'] = df['time'].diff().dt.total_seconds().fillna(0.0)
 
-This table represents a synchronized, canonical abstraction of the raw CAN data, aggregated at deterministic time intervals. The fundamental variables required for route segmentation are:
-* `time`: UTC Timestamps.
-* `latitude`/`longitude`: GPS coordinates (spatial analysis).
-* `odometer`: A monotonic cumulative distance variable (scalar logic).
-* `soc`: Battery State of Charge (%).
+if 'prnd_state' not in df.columns:
+    df['prnd_state'] = 0  # Default to 0 if column is missing
 
-### Programmatic Extraction
+# --- Lightweight Iteration ---
+for row in df.itertuples():
+    # Dot-notation access avoids dictionary-style lookups
+    t = row.time
+    odo_mi = row.odo_mi
+    soc = row.soc
+    charge_st = row.charge_state
+    prnd_st = row.prnd_state
+    time_gap = row.time_gap
+    # ... logic continues ...
+```
 
-Data is retrieved from this table using formalized SQL queries, as encapsulated in the `route_queries.py` utility module. For reproducible unit testing and model development, automated snapshots are executed to generate standard CSV datasets, such as the `sample_golden_signal_opent1.csv` file utilized in this study.
+---
 
-## 4. Deterministic Route Segmentation (The Transform Phase)
+## 2. Core Route Engine Logic
 
-The primary mathematical hurdle is segmentation: identifying when a vehicle begins a discrete driving event and when that event concludes, specifically distinguishing it from charging or significant idling events.
+The engine must intelligently parse continuous streams of telemetry to determine when a route begins and, more importantly, *why* it ends. 
 
-### The Algorithm Logic
+A route actively starts when the vehicle registers its first odometer increase (`> 0.01 miles`) while the vehicle is not in Park (`prnd_state != 1`). 
 
-The deterministic logic behind the segmentation engine is formalized in the `calculate_driving_route` function. The core algorithm relies on a robust detection of state changes.
+### The Split Triggers
+The engine determines the end of a route based on three primary operational states:
 
-Our previous iteration, implemented in `route_calculator.py`, utilized the `ignition` status in conjunction with motion detection. In our refined iteration, `route_calculator2.py`, the motion detection logic was simplified for robustness:
+1. **Charge:** The route naturally ends because the truck was plugged in. To prevent signal noise from triggering false stops, this state requires `charge_state == 8` for $k \ge 15$ consecutive records (the noise filter).
+2. **Idle:** The route ends because the truck parked and stopped moving. Triggered when a time gap of $\ge 2.5$ hours occurs between valid telemetry rows.
+3. **Open:** The truck was still actively driving when the 48-hour data query window cut off. This route is saved to the database but flagged as unfinished, awaiting the next batch run.
 
-1.  A "driving segment" is defined by consecutive rows where the vehicle has a speed greater than zero.
-2.  The script detects a "trip start" when the ignition status changes from 0 to 1.
-3.  A "trip end" is defined when the ignition status reverts to 0 (ignition off), or a significant temporal gap in data is observed.
-4.  If a potential trip end is detected (ignition off), the script validates the entire driving segment against several heuristic parameters:
-    * **Minimum Duration:** Must the drive last longer than, e.g., 60 seconds?
-    * **Minimum Distance:** Did the vehicle travel farther than, e.g., 0.1 miles?
-5.  If validated, a resulting row is appended to the `driving_route` table.
+---
 
-This logic ensures that only meaningful driving events are recorded, filtering out "accidental" ignition cycles or GPS drift while the vehicle is parked.
+## 3. Fault Tolerance: The Sliding Window & Reconciliation
 
-## 5. Engineering Optimization: Iteration vs. Vectorization
+Because the engine processes data in 48-hour batches, a truck may be actively driving precisely when the time window cuts off resulting in an **"Open"** route. To prevent duplicating this trip when the next batch runs, the engine employs a highly fault-tolerant overlap reconciliation strategy.
 
-A significant computational bottleneck was identified during the implementation of the above algorithm. While statistically sound, the initial Python implementation of the loop created severe latency issues.
+### Deterministic UUIDs
+Primary keys for routes are generated dynamically using a namespace hash of the `deviceid` and the exact `start_time`.
 
-### The Bottleneck: Scalar Iteration with `iterrows()`
+### Window Reconciliation Logic
+Before finalizing the calculated routes, the engine queries the PostgreSQL database for any historical routes that overlap with the current processing window. 
 
-The original implementation processed telemetry data row-by-row using Pandas' `df.iterrows()`. This approach forced Python to perform expensive metadata checks and memory allocations for every row of data (often hundreds of thousands) within a given batch.
+If a newly calculated route overlaps with an existing database route (especially an "Open" one), the engine **inherits** the original start time and start odometer from the database. 
 
-**Result:** A batch of 100 trucks took **~48 to 50 seconds**.
+```python
+# --- WINDOW RECONCILIATION ---
+final_routes = []
+for r in raw_routes:
+    calc_start = pd.to_datetime(r['start_time']).tz_localize(None)
+    calc_end = pd.to_datetime(r['end_time']).tz_localize(None)
+    
+    matched_db_route = None
+    
+    # Check against overlapping routes pulled from the database
+    if existing_routes:
+        for db_r in existing_routes:
+            db_start = pd.to_datetime(db_r['start_time']).tz_localize(None)
+            db_end = pd.to_datetime(db_r['end_time']).tz_localize(None) if pd.notnull(db_r.get('end_time')) else pd.Timestamp.max
+            
+            if calc_start <= db_end and calc_end >= db_start:
+                matched_db_route = db_r
+                break 
+    
+    if matched_db_route:
+        # INHERIT FROM DATABASE to prevent duplicates
+        r['start_time'] = pd.to_datetime(matched_db_route['start_time'])
+        r['start_odo'] = matched_db_route['start_odo']
+        r['soc_start'] = matched_db_route.get('soc_start', r['soc_start'])
 
-### The Solution: Optimized Iteration with `itertuples()` & Vectorization
+    r['miles_driven'] = r['end_odo'] - r['start_odo']
+    r['id'] = generate_uuid(r['deviceid'], r['start_time'])
 
-To achieve deterministic sub-second processing, the loop was completely refactored in `route_calculator2.py`. We eliminated standard Pandas series iteration entirely, replacing it with `df.itertuples(index=False)`, which provides a significant speed advantage.
+    if r['split_reason'] == 'Open' or r['miles_driven'] >= min_miles:
+        final_routes.append(r)
+```
 
-Furthermore, all auxiliary mathematical operations (such as converting odometer counts into miles or State of Charge deltas) were moved outside the loop and executed as **vectorized operations** across the entire column. 
+### PostgreSQL UPSERT Integrity
+Because the UUID is strictly deterministic, writing the reconciled route to the database triggers an `ON CONFLICT` clause. Instead of failing or duplicating, PostgreSQL seamlessly updates the `end_time`, `end_odo`, and `split_reason` of the original route.
 
-**Result:** Processing time for the identical 100-truck batch dropped to **~0.7 seconds**, achieving a **~64x speed improvement**.
+```sql
+INSERT INTO driving_route (
+    id, deviceid, start_time, end_time, 
+    start_odo, end_odo, miles_driven, 
+    soc_start, soc_end, split_reason
+)
+VALUES (
+    :id, :deviceid, :start_time, :end_time, 
+    :start_odo, :end_odo, :miles_driven, 
+    :soc_start, :soc_end, :split_reason
+)
+ON CONFLICT (id)
+DO UPDATE SET
+    end_time = EXCLUDED.end_time,
+    start_odo = EXCLUDED.start_odo,
+    end_odo = EXCLUDED.end_odo,
+    miles_driven = EXCLUDED.miles_driven,
+    soc_end = EXCLUDED.soc_end,
+    split_reason = EXCLUDED.split_reason,
+    recordupdatedat = NOW();
+```
 
-## 6. Visualization & Interface Design (Communicate)
+---
 
-To expose these calculated routes to human stakeholders (fleet managers and engineers), the data is visualized via an interactive **Grafana Service Dashboard**. As highlighted by Alex Gold (2022) in "DevOps for Data Science," utilizing a dynamic medium like an interactive dashboard ensures insights are both sustainable and digestible.
+## 4. Visualizing Fleet Operations
 
-![The formalized Grafana Service Dashboard, providing an integrated spatial and temporal view of calculated driving routes. The left panel shows GPS pings overlays on the map, while the right time-series panels show odometer and battery voltage stability throughout the specific trip duration.](images/grafana_dashboard.jpg){#fig-dashboard}
+The raw data calculated by the engine provides the foundation for fleet analytics, range estimation, and operational monitoring. 
 
-### Integrated Time-Series Analysis
+### Raw Route Telemetry (Database View)
+Below is a sample of the consolidated data stored in the `driving_route` table, representing the fully reconciled trips.
 
-Figure 1 illustrates the final interface. The segmentation engine populates the `Driving Route` table (bottom left) with discrete trip metrics. Crucially, the dashboard is linked to the backend "Golden Signals" table via the timestamp variables (`from` and `to`).
+![Raw Driving Route Database Table](images/database_table_sample.png)
 
-Once a specific trip is identified in the table, the human operator can utilize Grafana's internal linking feature to "zoom" the entire dashboard to only show the GPS dots and corresponding time-series data (LV, Odometer) for that precise duration. This eliminates temporal "white noise," allowing for immediate identification of sensor errors or battery anomalies that occurred *during* a specific route.
+### Fleet Route Dashboard (Grafana)
+By parsing the deterministic route records, we can visualize active vehicle states, historic trips, and charging behaviors across the entire fleet in near-real-time.
 
-### Verification via the Raw Database View
-
-To verify the integrity of this visualization against our Optimized Engine's output, we can examine a raw SQL view of the segmented `driving_route` table within the Postgres database.
-
-![A snapshot of the actual Postgres database view of the output from our Route segmentation engine. This demonstrates the successfully calculated route variables: deterministic start/end times, trip duration, odometer-based mileage, and battery energy usage metrics (`soc_start`/`soc_end`).](images/db_driving_route.png){#fig-db_view}
-
-Figure 2 confirms the successful generation of our deterministic driving routes. Each row now represents a validated driving event, complete with a clean start/end time, duration, validated distance, and energy delta. It is this structured output that serves as the final, clean input required for the Informer-based predictive models.
-
-## 7. Conclusions
-
-The successful implementation of this deterministic route segmentation engine has stabilized the EV telemetry pipeline, addressing the primary data engineering challenges of scale and latency. By transforming raw continuous telemetry into clean, deterministic driving events, we have optimized not only the statistical precision of our State-of-Health modeling but also the sustainable communication of those insights to stakeholders. This optimized workflow ensures that advanced AI forecasting can proceed on a foundation of clean, reliable data.
+![Fleet Route Visualization in Grafana](images/grafana_dashboard.png)

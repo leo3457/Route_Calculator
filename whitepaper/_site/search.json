@@ -1,0 +1,79 @@
+[
+  {
+    "objectID": "about.html",
+    "href": "about.html",
+    "title": "Architecture & Methodology",
+    "section": "",
+    "text": "Modern commercial fleets generate a massive, continuous stream of CAN bus telemetry. For the Harbinger Route Calculator, the primary engineering challenge was not just ingesting this data, but organizing it into deterministic, human-readable “routes” without choking the compute layer or duplicating records in the database.\nThe previous architecture suffered from scalar iteration and the N+1 database query problem. As the fleet grew, the time to calculate routes scaled linearly and unsustainably. This project was initiated to completely rebuild the calculation engine for speed, accuracy, and horizontal scalability."
+  },
+  {
+    "objectID": "about.html#the-challenge-telemetry-at-scale",
+    "href": "about.html#the-challenge-telemetry-at-scale",
+    "title": "Architecture & Methodology",
+    "section": "",
+    "text": "Modern commercial fleets generate a massive, continuous stream of CAN bus telemetry. For the Harbinger Route Calculator, the primary engineering challenge was not just ingesting this data, but organizing it into deterministic, human-readable “routes” without choking the compute layer or duplicating records in the database.\nThe previous architecture suffered from scalar iteration and the N+1 database query problem. As the fleet grew, the time to calculate routes scaled linearly and unsustainably. This project was initiated to completely rebuild the calculation engine for speed, accuracy, and horizontal scalability."
+  },
+  {
+    "objectID": "about.html#core-technology-stack",
+    "href": "about.html#core-technology-stack",
+    "title": "Architecture & Methodology",
+    "section": "Core Technology Stack",
+    "text": "Core Technology Stack\nThe Route Calculator is built on a lightweight, high-performance data engineering stack:\n\nPython & Flask-RESTful: Serves as the API layer, exposing the calculation engine to external triggers via robust POST endpoints.\nPandas (C-Optimized): Handles all in-memory telemetry manipulation. By utilizing vectorized Pandas operations (.diff(), .fillna()), the engine bypasses Python’s interpreter overhead and executes mathematical transformations at the C/C++ hardware level.\nPostgreSQL & SQLAlchemy: Acts as the persistent storage layer. Complex analytical queries are executed directly on the DB engine, and upserts leverage deterministic ON CONFLICT constraints to guarantee data integrity."
+  },
+  {
+    "objectID": "about.html#architecture-the-batch-processing-pipeline",
+    "href": "about.html#architecture-the-batch-processing-pipeline",
+    "title": "Architecture & Methodology",
+    "section": "Architecture: The Batch Processing Pipeline",
+    "text": "Architecture: The Batch Processing Pipeline\nThe system is designed to run in highly efficient batches (e.g., a 48-hour trailing window). The data flow follows a strict, four-phase pipeline:\n\nBulk Database Reads: Instead of querying the database per truck (the N+1 problem), the engine fetches all active telemetry and all historical overlapping routes for the entire fleet in two massive, highly optimized queries.\nIn-Memory Sectioning: The bulk data is locally partitioned using Pandas groupby(), creating isolated DataFrames for each specific vehicle in a fraction of a second.\nThe Vectorized Engine: Each vehicle’s telemetry passes through the C-level math operators, followed by a lightweight itertuples() loop to apply the business logic (Charge, Idle, Open states) and reconcile against historical overlaps.\nBulk Database Write: The fully validated and reconciled route records are grouped together and written back to PostgreSQL in a single bulk UPSERT operation."
+  },
+  {
+    "objectID": "about.html#future-scalability-embarrassingly-parallel",
+    "href": "about.html#future-scalability-embarrassingly-parallel",
+    "title": "Architecture & Methodology",
+    "section": "Future Scalability: Embarrassingly Parallel",
+    "text": "Future Scalability: Embarrassingly Parallel\nBecause all database reads and writes have been decoupled from the calculation loop, the process_golden_df engine is now completely stateless.\nThis means the architecture is currently embarrassingly parallel. If the fleet size scales to the point where a single vectorized loop becomes a bottleneck (e.g., 5,000+ trucks), the system is already structurally prepared to distribute the workload.\nFuture iterations will seamlessly implement concurrent.futures.ProcessPoolExecutor to chunk the grouped_telemetry dictionary and assign specific fleets to independent CPU cores, yielding near-linear performance gains."
+  },
+  {
+    "objectID": "index.html",
+    "href": "index.html",
+    "title": "Harbinger Route Calculator: Engineering a High-Performance Telemetry Engine",
+    "section": "",
+    "text": "The Harbinger Route Calculator processes millions of rows of synchronized CAN bus telemetry to generate deterministic, consolidated driving routes for the fleet.\nIn its latest iteration, the calculation engine underwent a massive architectural refactor to eliminate Python-level memory allocation overhead and database query bottlenecks. By leveraging C-level Pandas vectorization, lightweight iteration, and bulk PostgreSQL upserts, processing time for a standard 180-truck batch dropped from ~48 seconds to ~0.7 seconds—a 64× performance improvement."
+  },
+  {
+    "objectID": "index.html#executive-summary",
+    "href": "index.html#executive-summary",
+    "title": "Harbinger Route Calculator: Engineering a High-Performance Telemetry Engine",
+    "section": "",
+    "text": "The Harbinger Route Calculator processes millions of rows of synchronized CAN bus telemetry to generate deterministic, consolidated driving routes for the fleet.\nIn its latest iteration, the calculation engine underwent a massive architectural refactor to eliminate Python-level memory allocation overhead and database query bottlenecks. By leveraging C-level Pandas vectorization, lightweight iteration, and bulk PostgreSQL upserts, processing time for a standard 180-truck batch dropped from ~48 seconds to ~0.7 seconds—a 64× performance improvement."
+  },
+  {
+    "objectID": "index.html#performance-optimization-overcoming-the-python-bottleneck",
+    "href": "index.html#performance-optimization-overcoming-the-python-bottleneck",
+    "title": "Harbinger Route Calculator: Engineering a High-Performance Telemetry Engine",
+    "section": "1. Performance Optimization: Overcoming the Python Bottleneck",
+    "text": "1. Performance Optimization: Overcoming the Python Bottleneck\n\nThe Original Bottleneck: iterrows() and Scalar Math\nThe initial engine processed telemetry sequentially using Pandas iterrows(). Because Python is dynamically typed, iterating row-by-row forces the interpreter to perform type checks, allocate memory for a full Pandas Series object, and dispatch mathematical operations sequentially for every single row. Across 500,000+ rows of telemetry, this CPU thrashing caused severe latency.\n\n\nThe Solution: Vectorization and itertuples()\nTo achieve sub-second processing, the engine was rewritten to utilize vectorization.\nInstead of computing time gaps and distance deltas inside a Python loop, these operations are now applied to entire columns simultaneously. This pushes the heavy mathematical lifting down to highly optimized C/C++ execution paths at the hardware level.\nOnce the math is calculated in bulk, the engine iterates over the data using itertuples(), which yields lightweight, read-only NamedTuples with near-zero overhead.\n\nVectorized Math Implementation\n# --- Vectorization (The Math) ---\n# Executed in bulk via C-level paths before iteration begins\ndf['odo_mi'] = df['odometer'] * METERS_TO_MILES\ndf['time_gap'] = df['time'].diff().dt.total_seconds().fillna(0.0)\n\nif 'prnd_state' not in df.columns:\n    df['prnd_state'] = 0  # Default to 0 if column is missing\n\n# --- Lightweight Iteration ---\nfor row in df.itertuples():\n    # Dot-notation access avoids dictionary-style lookups\n    t = row.time\n    odo_mi = row.odo_mi\n    soc = row.soc\n    charge_st = row.charge_state\n    prnd_st = row.prnd_state\n    time_gap = row.time_gap\n    # ... logic continues ..."
+  },
+  {
+    "objectID": "index.html#core-route-engine-logic",
+    "href": "index.html#core-route-engine-logic",
+    "title": "Harbinger Route Calculator: Engineering a High-Performance Telemetry Engine",
+    "section": "2. Core Route Engine Logic",
+    "text": "2. Core Route Engine Logic\nThe engine must intelligently parse continuous streams of telemetry to determine when a route begins and, more importantly, why it ends.\nA route actively starts when the vehicle registers its first odometer increase (&gt; 0.01 miles) while the vehicle is not in Park (prnd_state != 1).\n\nThe Split Triggers\nThe engine determines the end of a route based on three primary operational states:\n\nCharge: The route naturally ends because the truck was plugged in. To prevent signal noise from triggering false stops, this state requires charge_state == 8 for \\(k \\ge 15\\) consecutive records (the noise filter).\nIdle: The route ends because the truck parked and stopped moving. Triggered when a time gap of \\(\\ge 2.5\\) hours occurs between valid telemetry rows.\nOpen: The truck was still actively driving when the 48-hour data query window cut off. This route is saved to the database but flagged as unfinished, awaiting the next batch run."
+  },
+  {
+    "objectID": "index.html#fault-tolerance-the-sliding-window-reconciliation",
+    "href": "index.html#fault-tolerance-the-sliding-window-reconciliation",
+    "title": "Harbinger Route Calculator: Engineering a High-Performance Telemetry Engine",
+    "section": "3. Fault Tolerance: The Sliding Window & Reconciliation",
+    "text": "3. Fault Tolerance: The Sliding Window & Reconciliation\nBecause the engine processes data in 48-hour batches, a truck may be actively driving precisely when the time window cuts off resulting in an “Open” route. To prevent duplicating this trip when the next batch runs, the engine employs a highly fault-tolerant overlap reconciliation strategy.\n\nDeterministic UUIDs\nPrimary keys for routes are generated dynamically using a namespace hash of the deviceid and the exact start_time.\n\n\nWindow Reconciliation Logic\nBefore finalizing the calculated routes, the engine queries the PostgreSQL database for any historical routes that overlap with the current processing window.\nIf a newly calculated route overlaps with an existing database route (especially an “Open” one), the engine inherits the original start time and start odometer from the database.\n# --- WINDOW RECONCILIATION ---\nfinal_routes = []\nfor r in raw_routes:\n    calc_start = pd.to_datetime(r['start_time']).tz_localize(None)\n    calc_end = pd.to_datetime(r['end_time']).tz_localize(None)\n    \n    matched_db_route = None\n    \n    # Check against overlapping routes pulled from the database\n    if existing_routes:\n        for db_r in existing_routes:\n            db_start = pd.to_datetime(db_r['start_time']).tz_localize(None)\n            db_end = pd.to_datetime(db_r['end_time']).tz_localize(None) if pd.notnull(db_r.get('end_time')) else pd.Timestamp.max\n            \n            if calc_start &lt;= db_end and calc_end &gt;= db_start:\n                matched_db_route = db_r\n                break \n    \n    if matched_db_route:\n        # INHERIT FROM DATABASE to prevent duplicates\n        r['start_time'] = pd.to_datetime(matched_db_route['start_time'])\n        r['start_odo'] = matched_db_route['start_odo']\n        r['soc_start'] = matched_db_route.get('soc_start', r['soc_start'])\n\n    r['miles_driven'] = r['end_odo'] - r['start_odo']\n    r['id'] = generate_uuid(r['deviceid'], r['start_time'])\n\n    if r['split_reason'] == 'Open' or r['miles_driven'] &gt;= min_miles:\n        final_routes.append(r)\n\n\nPostgreSQL UPSERT Integrity\nBecause the UUID is strictly deterministic, writing the reconciled route to the database triggers an ON CONFLICT clause. Instead of failing or duplicating, PostgreSQL seamlessly updates the end_time, end_odo, and split_reason of the original route.\nINSERT INTO driving_route (\n    id, deviceid, start_time, end_time, \n    start_odo, end_odo, miles_driven, \n    soc_start, soc_end, split_reason\n)\nVALUES (\n    :id, :deviceid, :start_time, :end_time, \n    :start_odo, :end_odo, :miles_driven, \n    :soc_start, :soc_end, :split_reason\n)\nON CONFLICT (id)\nDO UPDATE SET\n    end_time = EXCLUDED.end_time,\n    start_odo = EXCLUDED.start_odo,\n    end_odo = EXCLUDED.end_odo,\n    miles_driven = EXCLUDED.miles_driven,\n    soc_end = EXCLUDED.soc_end,\n    split_reason = EXCLUDED.split_reason,\n    recordupdatedat = NOW();"
+  },
+  {
+    "objectID": "index.html#visualizing-fleet-operations",
+    "href": "index.html#visualizing-fleet-operations",
+    "title": "Harbinger Route Calculator: Engineering a High-Performance Telemetry Engine",
+    "section": "4. Visualizing Fleet Operations",
+    "text": "4. Visualizing Fleet Operations\nThe raw data calculated by the engine provides the foundation for fleet analytics, range estimation, and operational monitoring.\n\nRaw Route Telemetry (Database View)\nBelow is a sample of the consolidated data stored in the driving_route table, representing the fully reconciled trips.\n\n\n\nRaw Driving Route Database Table\n\n\n\n\nFleet Route Dashboard (Grafana)\nBy parsing the deterministic route records, we can visualize active vehicle states, historic trips, and charging behaviors across the entire fleet in near-real-time.\n\n\n\nFleet Route Visualization in Grafana"
+  }
+]

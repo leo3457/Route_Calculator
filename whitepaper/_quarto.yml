@@ -1,3 +1,7 @@
+project:
+  type: website
+  output-dir: _site
+
 website:
   title: "Harbinger Route Calculator"
   description: "High-Performance Telemetry Engine Documentation"
@@ -9,9 +13,6 @@ website:
         text: "Engine & Logic"
       - href: about.qmd
         text: "Architecture & Stack"
-    right:
-      - icon: github
-        href: https://github.com/leo3457/Route_Calculator
 
 format:
   html:

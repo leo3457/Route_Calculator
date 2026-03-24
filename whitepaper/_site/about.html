@@ -9,7 +9,7 @@
 <meta name="author" content="Data Engineering Team">
 <meta name="dcterms.date" content="2026-03-24">
 
-<title>Architecture &amp; Methodology</title>
+<title>Architecture &amp; Methodology – Harbinger Route Calculator</title>
 <style>
 /* Default styles provided by pandoc.
 ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
@@ -28,28 +28,94 @@ ul.task-list li input[type="checkbox"] {
 </style>
 
 
-<script src="about_files/libs/clipboard/clipboard.min.js"></script>
-<script src="about_files/libs/quarto-html/quarto.js" type="module"></script>
-<script src="about_files/libs/quarto-html/tabsets/tabsets.js" type="module"></script>
-<script src="about_files/libs/quarto-html/popper.min.js"></script>
-<script src="about_files/libs/quarto-html/tippy.umd.min.js"></script>
-<script src="about_files/libs/quarto-html/anchor.min.js"></script>
-<link href="about_files/libs/quarto-html/tippy.css" rel="stylesheet">
-<link href="about_files/libs/quarto-html/quarto-syntax-highlighting-067f8ab80d092ae3595f7402c2c9b667.css" rel="stylesheet" id="quarto-text-highlighting-styles">
-<script src="about_files/libs/bootstrap/bootstrap.min.js"></script>
-<link href="about_files/libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
-<link href="about_files/libs/bootstrap/bootstrap-1f4dc3fbf68814d8519f4eb599c41454.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+<script src="site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="site_libs/quarto-nav/headroom.min.js"></script>
+<script src="site_libs/clipboard/clipboard.min.js"></script>
+<script src="site_libs/quarto-search/autocomplete.umd.js"></script>
+<script src="site_libs/quarto-search/fuse.min.js"></script>
+<script src="site_libs/quarto-search/quarto-search.js"></script>
+<meta name="quarto:offset" content="./">
+<script src="site_libs/quarto-html/quarto.js" type="module"></script>
+<script src="site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="site_libs/quarto-html/popper.min.js"></script>
+<script src="site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="site_libs/quarto-html/anchor.min.js"></script>
+<link href="site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="site_libs/quarto-html/quarto-syntax-highlighting-067f8ab80d092ae3595f7402c2c9b667.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="site_libs/bootstrap/bootstrap-5911866b99943cd6f96956c303aad437.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+<script id="quarto-search-options" type="application/json">{
+  "location": "navbar",
+  "copy-button": false,
+  "collapse-after": 3,
+  "panel-placement": "end",
+  "type": "overlay",
+  "limit": 50,
+  "keyboard-shortcut": [
+    "f",
+    "/",
+    "s"
+  ],
+  "show-item-context": false,
+  "language": {
+    "search-no-results-text": "No results",
+    "search-matching-documents-text": "matching documents",
+    "search-copy-link-title": "Copy link to search",
+    "search-hide-matches-text": "Hide additional matches",
+    "search-more-match-text": "more match in this document",
+    "search-more-matches-text": "more matches in this document",
+    "search-clear-button-title": "Clear",
+    "search-text-placeholder": "",
+    "search-detached-cancel-button-title": "Cancel",
+    "search-submit-button-title": "Submit",
+    "search-label": "Search"
+  }
+}</script>
 
 
 <link rel="stylesheet" href="styles.css">
 </head>
 
-<body class="quarto-light">
+<body class="nav-fixed quarto-light">
 
-<div id="quarto-content" class="page-columns page-rows-contents page-layout-article">
-<div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
-  <nav id="TOC" role="doc-toc" class="toc-active">
-    <h2 id="toc-title">Table of contents</h2>
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top">
+    <nav class="navbar navbar-expand-lg " data-bs-theme="dark">
+      <div class="navbar-container container-fluid">
+      <div class="navbar-brand-container mx-auto">
+    <a class="navbar-brand" href="./index.html">
+    <span class="navbar-title">Harbinger Route Calculator</span>
+    </a>
+  </div>
+            <div id="quarto-search" class="" title="Search"></div>
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" role="menu" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+  <span class="navbar-toggler-icon"></span>
+</button>
+          <div class="collapse navbar-collapse" id="navbarCollapse">
+            <ul class="navbar-nav navbar-nav-scroll me-auto">
+  <li class="nav-item">
+    <a class="nav-link" href="./index.html"> 
+<span class="menu-text">Engine &amp; Logic</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link active" href="./about.html" aria-current="page"> 
+<span class="menu-text">Architecture &amp; Stack</span></a>
+  </li>  
+</ul>
+          </div> <!-- /navcollapse -->
+            <div class="quarto-navbar-tools">
+</div>
+      </div> <!-- /container-fluid -->
+    </nav>
+</header>
+<!-- content -->
+<div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article page-navbar">
+<!-- sidebar -->
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">On this page</h2>
    
   <ul>
   <li><a href="#the-challenge-telemetry-at-scale" id="toc-the-challenge-telemetry-at-scale" class="nav-link active" data-scroll-target="#the-challenge-telemetry-at-scale">The Challenge: Telemetry at Scale</a></li>
@@ -58,7 +124,8 @@ ul.task-list li input[type="checkbox"] {
   <li><a href="#future-scalability-embarrassingly-parallel" id="toc-future-scalability-embarrassingly-parallel" class="nav-link" data-scroll-target="#future-scalability-embarrassingly-parallel">Future Scalability: Embarrassingly Parallel</a></li>
   </ul>
 <div class="quarto-alternate-formats"><h2>Other Formats</h2><ul><li><a href="about.pdf"><i class="bi bi-file-pdf"></i>PDF</a></li></ul></div></nav>
-</div>
+    </div>
+<!-- main -->
 <main class="content" id="quarto-document-content">
 
 <header id="title-block-header" class="quarto-title-block default">
@@ -121,10 +188,11 @@ ul.task-list li input[type="checkbox"] {
 <p>Because all database reads and writes have been decoupled from the calculation loop, the <code>process_golden_df</code> engine is now completely stateless.</p>
 <p>This means the architecture is currently <strong>embarrassingly parallel</strong>. If the fleet size scales to the point where a single vectorized loop becomes a bottleneck (e.g., 5,000+ trucks), the system is already structurally prepared to distribute the workload.</p>
 <p>Future iterations will seamlessly implement <code>concurrent.futures.ProcessPoolExecutor</code> to chunk the <code>grouped_telemetry</code> dictionary and assign specific fleets to independent CPU cores, yielding near-linear performance gains.</p>
+
+
 </section>
 
-</main>
-<!-- /main column -->
+</main> <!-- /main -->
 <script id="quarto-html-after-body" type="application/javascript">
   window.document.addEventListener("DOMContentLoaded", function (event) {
     const icon = "";
